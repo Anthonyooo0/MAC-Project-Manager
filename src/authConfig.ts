@@ -4,7 +4,7 @@ import { Configuration, LogLevel } from "@azure/msal-browser";
 // Using the same tenant as MAC Products apps
 export const msalConfig: Configuration = {
   auth: {
-    clientId: "69f795f7-2715-4d60-b022-993cd7a0aeb0",
+    clientId: "25e35ae1-9af0-4326-a24b-d4b74f48de48",
     authority: "https://login.microsoftonline.com/422e0e56-e8fe-4fc5-8554-b9b89f3cadac",
     redirectUri: window.location.origin,
     postLogoutRedirectUri: window.location.origin,
