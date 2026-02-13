@@ -98,4 +98,13 @@ export interface MilestoneFormData {
 }
 
 // View modes
-export type ViewMode = 'dashboard' | 'project' | 'timeline' | 'report' | 'calendar';
+export type ViewMode = 'dashboard' | 'project' | 'timeline' | 'report' | 'calendar' | 'audit_log';
+
+export interface AuditLogEntry {
+  id: string;
+  user_email: string;
+  project_name: string;
+  action: string;
+  details: string;
+  created_at: string;
+}

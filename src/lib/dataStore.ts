@@ -4,7 +4,7 @@
  */
 
 import { supabase } from './supabase';
-import type { Project, Milestone, Task, ProjectUpdate } from '../types';
+import type { Project, Milestone, Task, ProjectUpdate, AuditLogEntry } from '../types';
 
 // =====================================================
 // PROJECTS
@@ -175,6 +175,24 @@ export async function createUpdate(data: Omit<ProjectUpdate, 'id' | 'created_at'
     .single();
   if (error) throw error;
   return update;
+}
+
+// =====================================================
+// AUDIT LOG
+// =====================================================
+
+export async function getAuditLog(): Promise<AuditLogEntry[]> {
+  const { data, error } = await supabase
+    .from('pt_audit_log')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) throw error;
+  return data || [];
+}
+
+export async function logAction(userEmail: string, projectName: string, action: string, details: string = ''): Promise<void> {
+  await supabase.from('pt_audit_log').insert({ user_email: userEmail, project_name: projectName, action, details });
 }
 
 // =====================================================

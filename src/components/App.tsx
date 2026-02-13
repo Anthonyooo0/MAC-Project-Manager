@@ -3,7 +3,7 @@ import * as db from '../lib/dataStore';
 import { isAdmin } from '../lib/permissions';
 import { toast } from './Toast';
 import type {
-  Project, Milestone, Task, ProjectUpdate,
+  Project, Milestone, Task, ProjectUpdate, AuditLogEntry,
   ProjectStatus, ProjectPriority, TaskStatus, MilestonePhase, ViewMode
 } from '../types';
 
@@ -143,6 +143,7 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
       });
       toast.success('Project created');
       setShowProjectForm(false);
+      await db.logAction(currentUser, data.name || '', 'CREATED NEW PROJECT', `Status: ${data.status || 'planning'} | Priority: ${data.priority || 'medium'}`);
       await loadData();
     } catch (err) {
       toast.error('Failed to create project');
@@ -156,6 +157,7 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
       toast.success('Project updated');
       setEditingProject(null);
       setShowProjectForm(false);
+      await db.logAction(currentUser, editingProject.name, 'UPDATED PROJECT DETAILS', Object.keys(data).join(', '));
       await loadData();
     } catch (err) {
       toast.error('Failed to update project');
@@ -164,9 +166,11 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
 
   const handleDeleteProject = async (id: string) => {
     try {
+      const proj = projects.find(p => p.id === id);
       await db.deleteProject(id);
       toast.success('Project deleted');
       setDeleteConfirmId(null);
+      await db.logAction(currentUser, proj?.name || '', 'PROJECT DELETED', `Deleted project: ${proj?.name || id}`);
       if (selectedProjectId === id) goBack();
       await loadData();
     } catch (err) {
@@ -210,6 +214,9 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
                   <button onClick={() => setViewMode('calendar')} className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'calendar' ? 'bg-white text-mac-navy shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}>
                     Calendar
                   </button>
+                  <button onClick={() => setViewMode('audit_log')} className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'audit_log' ? 'bg-white text-mac-navy shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}>
+                    Audit Log
+                  </button>
                 </div>
               )}
               <span className="text-xs font-mono bg-slate-100 text-slate-500 px-2 py-1 rounded hidden sm:block">
@@ -229,6 +236,8 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
           <div className="flex items-center justify-center py-20">
             <div className="animate-spin w-8 h-8 border-4 border-mac-accent border-t-transparent rounded-full"></div>
           </div>
+        ) : viewMode === 'audit_log' ? (
+          <AuditLogView />
         ) : viewMode === 'calendar' ? (
           <CalendarView />
         ) : viewMode === 'report' ? (
@@ -238,7 +247,7 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
             project={selectedProject}
             currentUser={currentUser}
             isAdmin={userIsAdmin}
-            onUpdate={async (data) => { try { await db.updateProject(selectedProject.id, data); toast.success('Updated'); await loadData(); } catch { toast.error('Failed to update'); } }}
+            onUpdate={async (data) => { try { await db.updateProject(selectedProject.id, data); toast.success('Updated'); await db.logAction(currentUser, selectedProject.name, 'UPDATED PROJECT DETAILS', Object.keys(data).join(', ')); await loadData(); } catch { toast.error('Failed to update'); } }}
             onDelete={() => setDeleteConfirmId(selectedProject.id)}
             refresh={loadData}
           />
@@ -1336,6 +1345,90 @@ const CalendarView: React.FC = () => {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// =====================================================
+// AUDIT LOG VIEW
+// =====================================================
+const AUDIT_ACTION_STYLES: Record<string, { bg: string; text: string }> = {
+  'PROJECT DELETED': { bg: 'bg-red-100', text: 'text-red-700' },
+  'CREATED NEW PROJECT': { bg: 'bg-blue-100', text: 'text-blue-700' },
+  'UPDATED PROJECT DETAILS': { bg: 'bg-teal-100', text: 'text-teal-700' },
+};
+
+const AuditLogView: React.FC = () => {
+  const [entries, setEntries] = useState<AuditLogEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await db.getAuditLog();
+        setEntries(data);
+      } catch {
+        toast.error('Failed to load audit log');
+      } finally {
+        setAuditLoading(false);
+      }
+    })();
+  }, []);
+
+  if (auditLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="animate-spin w-8 h-8 border-4 border-mac-accent border-t-transparent rounded-full"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-fadeSlide">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200">
+          <h2 className="text-lg font-bold text-slate-800 uppercase tracking-wide">System Audit Log</h2>
+          <p className="text-sm text-slate-500 mt-1">{entries.length} entries</p>
+        </div>
+
+        {entries.length === 0 ? (
+          <div className="p-12 text-center text-slate-500 text-sm">No audit log entries yet. Actions will be recorded as you create, update, and delete projects.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                  <th className="px-6 py-3 font-bold text-slate-500 text-xs uppercase">Timestamp</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-xs uppercase">User</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-xs uppercase">Project</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-xs uppercase">Action</th>
+                  <th className="px-6 py-3 font-bold text-slate-500 text-xs uppercase">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {entries.map(entry => {
+                  const actionStyle = AUDIT_ACTION_STYLES[entry.action] || { bg: 'bg-slate-100', text: 'text-slate-700' };
+                  return (
+                    <tr key={entry.id} className="hover:bg-slate-50">
+                      <td className="px-6 py-3 text-xs text-slate-500 whitespace-nowrap">
+                        {new Date(entry.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
+                      </td>
+                      <td className="px-6 py-3 text-sm text-slate-700">{entry.user_email}</td>
+                      <td className="px-6 py-3 text-sm font-medium text-slate-800">{entry.project_name}</td>
+                      <td className="px-6 py-3">
+                        <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${actionStyle.bg} ${actionStyle.text} uppercase whitespace-nowrap`}>
+                          {entry.action}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3 text-sm text-slate-500">{entry.details || '\u2014'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
