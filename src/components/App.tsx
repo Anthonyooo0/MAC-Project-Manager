@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { dataStore } from '../lib/dataStore';
+import React, { useState, useCallback, useEffect } from 'react';
+import * as db from '../lib/dataStore';
 import { isAdmin } from '../lib/permissions';
 import { toast } from './Toast';
 import type {
@@ -78,18 +78,40 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
   const [filterStatus, setFilterStatus] = useState<ProjectStatus | ''>('');
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const [, setTick] = useState(0);
-  const refresh = useCallback(() => setTick(t => t + 1), []);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  // Data from Supabase
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [allTasks, setAllTasks] = useState<Task[]>([]);
+  const [stats, setStats] = useState({ totalProjects: 0, activeProjects: 0, blockers: 0, completedTasks: 0, totalTasks: 0, taskCompletionRate: 0 });
+  const [loading, setLoading] = useState(true);
 
   const userIsAdmin = isAdmin(currentUser);
-  const projects = dataStore.getProjects();
-  const stats = dataStore.getStats();
 
-  const filteredProjects = projects.filter(p => {
+  const loadData = useCallback(async () => {
+    try {
+      const [p, t, s] = await Promise.all([
+        db.getProjects(),
+        db.getAllTasks(),
+        db.getStats(),
+      ]);
+      setProjects(p);
+      setAllTasks(t);
+      setStats(s);
+    } catch (err) {
+      toast.error('Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const filteredProjects = projects.filter((p: Project) => {
     const matchSearch = !searchTerm ||
       p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.tech_stack.some(t => t.toLowerCase().includes(searchTerm.toLowerCase()));
+      p.tech_stack.some((t: string) => t.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchStatus = !filterStatus || p.status === filterStatus;
     return matchSearch && matchStatus;
   });
@@ -104,45 +126,55 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
     setViewMode('dashboard');
   };
 
-  const handleCreateProject = (data: Partial<Project>) => {
-    dataStore.createProject({
-      name: data.name || '',
-      description: data.description || '',
-      status: data.status || 'planning',
-      priority: data.priority || 'medium',
-      progress: data.progress || 0,
-      tech_stack: data.tech_stack || [],
-      departments: data.departments || [],
-      start_date: data.start_date || null,
-      target_date: data.target_date || null,
-      notes: data.notes || '',
-      created_by: currentUser,
-    });
-    toast.success('Project created');
-    setShowProjectForm(false);
-    refresh();
+  const handleCreateProject = async (data: Partial<Project>) => {
+    try {
+      await db.createProject({
+        name: data.name || '',
+        description: data.description || '',
+        status: data.status || 'planning',
+        priority: data.priority || 'medium',
+        progress: data.progress || 0,
+        tech_stack: data.tech_stack || [],
+        departments: data.departments || [],
+        start_date: data.start_date || null,
+        target_date: data.target_date || null,
+        notes: data.notes || '',
+        created_by: currentUser,
+      });
+      toast.success('Project created');
+      setShowProjectForm(false);
+      await loadData();
+    } catch (err) {
+      toast.error('Failed to create project');
+    }
   };
 
-  const handleUpdateProject = (data: Partial<Project>) => {
+  const handleUpdateProject = async (data: Partial<Project>) => {
     if (!editingProject) return;
-    dataStore.updateProject(editingProject.id, data);
-    toast.success('Project updated');
-    setEditingProject(null);
-    setShowProjectForm(false);
-    refresh();
+    try {
+      await db.updateProject(editingProject.id, data);
+      toast.success('Project updated');
+      setEditingProject(null);
+      setShowProjectForm(false);
+      await loadData();
+    } catch (err) {
+      toast.error('Failed to update project');
+    }
   };
 
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-
-  const handleDeleteProject = (id: string) => {
-    dataStore.deleteProject(id);
-    toast.success('Project deleted');
-    setDeleteConfirmId(null);
-    if (selectedProjectId === id) goBack();
-    refresh();
+  const handleDeleteProject = async (id: string) => {
+    try {
+      await db.deleteProject(id);
+      toast.success('Project deleted');
+      setDeleteConfirmId(null);
+      if (selectedProjectId === id) goBack();
+      await loadData();
+    } catch (err) {
+      toast.error('Failed to delete project');
+    }
   };
 
-  const selectedProject = selectedProjectId ? dataStore.getProject(selectedProjectId) : null;
+  const selectedProject = selectedProjectId ? projects.find(p => p.id === selectedProjectId) || null : null;
 
   return (
     <div className="min-h-screen bg-mac-light">
@@ -193,7 +225,11 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {viewMode === 'calendar' ? (
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="animate-spin w-8 h-8 border-4 border-mac-accent border-t-transparent rounded-full"></div>
+          </div>
+        ) : viewMode === 'calendar' ? (
           <CalendarView />
         ) : viewMode === 'report' ? (
           <ReportView projects={projects} stats={stats} />
@@ -202,9 +238,9 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
             project={selectedProject}
             currentUser={currentUser}
             isAdmin={userIsAdmin}
-            onUpdate={(data) => { dataStore.updateProject(selectedProject.id, data); toast.success('Updated'); refresh(); }}
+            onUpdate={async (data) => { try { await db.updateProject(selectedProject.id, data); toast.success('Updated'); await loadData(); } catch { toast.error('Failed to update'); } }}
             onDelete={() => setDeleteConfirmId(selectedProject.id)}
-            refresh={refresh}
+            refresh={loadData}
           />
         ) : (
           <>
@@ -257,8 +293,8 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
                   onClick={() => openProject(project.id)}
                   onEdit={userIsAdmin ? () => { setEditingProject(project); setShowProjectForm(true); } : undefined}
                   onDelete={userIsAdmin ? () => setDeleteConfirmId(project.id) : undefined}
-                  taskCount={dataStore.getTasks(project.id).length}
-                  blockerCount={dataStore.getTasks(project.id).filter(t => t.is_blocker && t.status === 'blocked').length}
+                  taskCount={allTasks.filter(t => t.project_id === project.id).length}
+                  blockerCount={allTasks.filter(t => t.project_id === project.id && t.is_blocker && t.status === 'blocked').length}
                 />
               ))}
             </div>
@@ -413,114 +449,181 @@ const ProjectDetailView: React.FC<{
   project: Project;
   currentUser: string;
   isAdmin: boolean;
-  onUpdate: (data: Partial<Project>) => void;
+  onUpdate: (data: Partial<Project>) => Promise<void>;
   onDelete: () => void;
-  refresh: () => void;
+  refresh: () => Promise<void>;
 }> = ({ project, currentUser, isAdmin, onUpdate, onDelete, refresh }) => {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newUpdateContent, setNewUpdateContent] = useState('');
   const [showMilestoneForm, setShowMilestoneForm] = useState(false);
 
-  const milestones = dataStore.getMilestones(project.id);
-  const tasks = dataStore.getTasks(project.id);
-  const updates = dataStore.getUpdates(project.id);
+  // Async data from Supabase
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [updates, setUpdates] = useState<ProjectUpdate[]>([]);
+  const [detailLoading, setDetailLoading] = useState(true);
+
+  const loadProjectData = useCallback(async () => {
+    try {
+      const [m, t, u] = await Promise.all([
+        db.getMilestones(project.id),
+        db.getTasks(project.id),
+        db.getUpdates(project.id),
+      ]);
+      setMilestones(m);
+      setTasks(t);
+      setUpdates(u);
+    } catch (err) {
+      toast.error('Failed to load project data');
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [project.id]);
+
+  useEffect(() => { loadProjectData(); }, [loadProjectData]);
+
   const status = STATUS_CONFIG[project.status];
   const priority = PRIORITY_CONFIG[project.priority];
 
-  const addTask = () => {
+  const addTask = async () => {
     if (!newTaskTitle.trim()) return;
-    dataStore.createTask({
-      project_id: project.id,
-      milestone_id: null,
-      title: newTaskTitle.trim(),
-      description: '',
-      status: 'todo',
-      is_blocker: false,
-      due_date: null,
-      completed_at: null,
-      display_order: tasks.length,
-    });
-    setNewTaskTitle('');
-    toast.success('Task added');
-    refresh();
+    try {
+      await db.createTask({
+        project_id: project.id,
+        milestone_id: null,
+        title: newTaskTitle.trim(),
+        description: '',
+        status: 'todo',
+        is_blocker: false,
+        due_date: null,
+        completed_at: null,
+        display_order: tasks.length,
+      });
+      setNewTaskTitle('');
+      toast.success('Task added');
+      await loadProjectData();
+      await refresh();
+    } catch (err) {
+      toast.error('Failed to add task');
+    }
   };
 
-  const toggleTask = (task: Task) => {
+  const toggleTask = async (task: Task) => {
     const newStatus: TaskStatus = task.status === 'done' ? 'todo' : 'done';
-    dataStore.updateTask(task.id, {
-      status: newStatus,
-      completed_at: newStatus === 'done' ? new Date().toISOString() : null,
-    });
-    refresh();
+    try {
+      await db.updateTask(task.id, {
+        status: newStatus,
+        completed_at: newStatus === 'done' ? new Date().toISOString() : null,
+      });
+      await loadProjectData();
+      await refresh();
+    } catch (err) {
+      toast.error('Failed to update task');
+    }
   };
 
-  const cycleTaskStatus = (task: Task) => {
+  const cycleTaskStatus = async (task: Task) => {
     const order: TaskStatus[] = ['todo', 'in_progress', 'done'];
     const current = order.indexOf(task.status);
     const next = order[(current + 1) % order.length];
-    dataStore.updateTask(task.id, {
-      status: next,
-      completed_at: next === 'done' ? new Date().toISOString() : null,
-    });
-    refresh();
+    try {
+      await db.updateTask(task.id, {
+        status: next,
+        completed_at: next === 'done' ? new Date().toISOString() : null,
+      });
+      await loadProjectData();
+      await refresh();
+    } catch (err) {
+      toast.error('Failed to update task');
+    }
   };
 
-  const toggleBlocker = (task: Task) => {
-    dataStore.updateTask(task.id, {
-      is_blocker: !task.is_blocker,
-      status: !task.is_blocker ? 'blocked' : 'todo',
-    });
-    refresh();
+  const toggleBlocker = async (task: Task) => {
+    try {
+      await db.updateTask(task.id, {
+        is_blocker: !task.is_blocker,
+        status: !task.is_blocker ? 'blocked' : 'todo',
+      });
+      await loadProjectData();
+      await refresh();
+    } catch (err) {
+      toast.error('Failed to update task');
+    }
   };
 
-  const deleteTask = (id: string) => {
-    dataStore.deleteTask(id);
-    refresh();
+  const deleteTask = async (id: string) => {
+    try {
+      await db.deleteTask(id);
+      await loadProjectData();
+      await refresh();
+    } catch (err) {
+      toast.error('Failed to delete task');
+    }
   };
 
-  const addUpdate = () => {
+  const addUpdate = async () => {
     if (!newUpdateContent.trim()) return;
-    dataStore.createUpdate({
-      project_id: project.id,
-      content: newUpdateContent.trim(),
-      update_type: 'note',
-      created_by: currentUser,
-    });
-    setNewUpdateContent('');
-    toast.success('Update posted');
-    refresh();
+    try {
+      await db.createUpdate({
+        project_id: project.id,
+        content: newUpdateContent.trim(),
+        update_type: 'note',
+        created_by: currentUser,
+      });
+      setNewUpdateContent('');
+      toast.success('Update posted');
+      await loadProjectData();
+    } catch (err) {
+      toast.error('Failed to post update');
+    }
   };
 
-  const addMilestone = (data: { title: string; phase: MilestonePhase; due_date: string }) => {
-    dataStore.createMilestone({
-      project_id: project.id,
-      title: data.title,
-      phase: data.phase,
-      status: 'todo',
-      due_date: data.due_date || null,
-      completed_at: null,
-      display_order: milestones.length,
-    });
-    setShowMilestoneForm(false);
-    toast.success('Milestone added');
-    refresh();
+  const addMilestone = async (data: { title: string; phase: MilestonePhase; due_date: string }) => {
+    try {
+      await db.createMilestone({
+        project_id: project.id,
+        title: data.title,
+        phase: data.phase,
+        status: 'todo',
+        due_date: data.due_date || null,
+        completed_at: null,
+        display_order: milestones.length,
+      });
+      setShowMilestoneForm(false);
+      toast.success('Milestone added');
+      await loadProjectData();
+    } catch (err) {
+      toast.error('Failed to add milestone');
+    }
   };
 
-  const toggleMilestone = (m: Milestone) => {
+  const toggleMilestone = async (m: Milestone) => {
     const newStatus: TaskStatus = m.status === 'done' ? 'todo' : 'done';
-    dataStore.updateMilestone(m.id, {
-      status: newStatus,
-      completed_at: newStatus === 'done' ? new Date().toISOString() : null,
-    });
-    refresh();
+    try {
+      await db.updateMilestone(m.id, {
+        status: newStatus,
+        completed_at: newStatus === 'done' ? new Date().toISOString() : null,
+      });
+      await loadProjectData();
+    } catch (err) {
+      toast.error('Failed to update milestone');
+    }
   };
 
-  const recalcProgress = () => {
+  const recalcProgress = async () => {
     if (tasks.length === 0) return;
     const done = tasks.filter(t => t.status === 'done').length;
     const newProgress = Math.round((done / tasks.length) * 100);
-    onUpdate({ progress: newProgress });
+    await onUpdate({ progress: newProgress });
   };
+
+  if (detailLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="animate-spin w-8 h-8 border-4 border-mac-accent border-t-transparent rounded-full"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fadeSlide">
@@ -901,7 +1004,7 @@ const ProjectFormModal: React.FC<{
 // =====================================================
 const ReportView: React.FC<{
   projects: Project[];
-  stats: ReturnType<typeof dataStore.getStats>;
+  stats: { totalProjects: number; activeProjects: number; blockers: number; completedTasks: number; totalTasks: number; taskCompletionRate: number };
 }> = ({ projects, stats }) => {
   const statusCounts = projects.reduce((acc, p) => {
     acc[p.status] = (acc[p.status] || 0) + 1;
