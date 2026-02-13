@@ -50,6 +50,17 @@ const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; color: string }> =
   blocked: { label: 'Blocked', color: 'text-red-600' },
 };
 
+const TECH_STACK_OPTIONS = [
+  'React', 'TypeScript', 'JavaScript', 'Vite', 'Next.js', 'Node.js',
+  'Python', 'Django', 'Flask', 'C#', '.NET', 'Java', 'Go', 'Rust',
+  'Tailwind CSS', 'Bootstrap', 'CSS', 'HTML',
+  'Supabase', 'Firebase', 'Azure AD', 'Azure SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis',
+  'Docker', 'Kubernetes', 'AWS', 'Azure', 'GCP',
+  'REST API', 'GraphQL', 'WebSockets',
+  'Git', 'GitHub Actions', 'CI/CD',
+  'Power BI', 'Excel', 'SharePoint', 'Power Automate',
+];
+
 const formatDate = (d: string | null) => {
   if (!d) return '\u2014';
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -465,6 +476,7 @@ const ProjectDetailView: React.FC<{
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newUpdateContent, setNewUpdateContent] = useState('');
   const [showMilestoneForm, setShowMilestoneForm] = useState(false);
+  const [localProgress, setLocalProgress] = useState(project.progress);
 
   // Async data from Supabase
   const [milestones, setMilestones] = useState<Milestone[]>([]);
@@ -490,6 +502,7 @@ const ProjectDetailView: React.FC<{
   }, [project.id]);
 
   useEffect(() => { loadProjectData(); }, [loadProjectData]);
+  useEffect(() => { setLocalProgress(project.progress); }, [project.progress]);
 
   const status = STATUS_CONFIG[project.status];
   const priority = PRIORITY_CONFIG[project.priority];
@@ -657,15 +670,28 @@ const ProjectDetailView: React.FC<{
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-slate-600">Overall Progress</span>
               <div className="flex items-center gap-3">
-                <span className="text-lg font-bold text-mac-navy">{project.progress}%</span>
+                <span className="text-lg font-bold text-mac-navy">{localProgress}%</span>
                 {isAdmin && (
                   <button onClick={recalcProgress} className="text-xs text-mac-accent hover:underline">Auto-calc from tasks</button>
                 )}
               </div>
             </div>
-            <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
-              <div className="h-full bg-mac-accent rounded-full animate-progress" style={{ width: `${project.progress}%` }} />
-            </div>
+            {isAdmin ? (
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={localProgress}
+                onChange={e => setLocalProgress(Number(e.target.value))}
+                onMouseUp={() => onUpdate({ progress: localProgress })}
+                onTouchEnd={() => onUpdate({ progress: localProgress })}
+                className="w-full h-3 bg-slate-100 rounded-full appearance-none cursor-pointer accent-mac-accent [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-mac-accent [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md"
+              />
+            ) : (
+              <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-full bg-mac-accent rounded-full animate-progress" style={{ width: `${project.progress}%` }} />
+              </div>
+            )}
           </div>
 
           {/* Meta Info */}
@@ -915,7 +941,9 @@ const ProjectFormModal: React.FC<{
   const [description, setDescription] = useState(project?.description || '');
   const [status, setStatus] = useState<ProjectStatus>(project?.status || 'planning');
   const [priority, setPriority] = useState<ProjectPriority>(project?.priority || 'medium');
-  const [techStack, setTechStack] = useState(project?.tech_stack.join(', ') || '');
+  const [selectedTech, setSelectedTech] = useState<string[]>(project?.tech_stack || []);
+  const [customTech, setCustomTech] = useState('');
+  const [showTechDropdown, setShowTechDropdown] = useState(false);
   const [departments, setDepartments] = useState(project?.departments.join(', ') || '');
   const [startDate, setStartDate] = useState(project?.start_date || '');
   const [targetDate, setTargetDate] = useState(project?.target_date || '');
@@ -928,7 +956,7 @@ const ProjectFormModal: React.FC<{
       description: description.trim(),
       status,
       priority,
-      tech_stack: techStack.split(',').map(s => s.trim()).filter(Boolean),
+      tech_stack: selectedTech,
       departments: departments.split(',').map(s => s.trim()).filter(Boolean),
       start_date: startDate || null,
       target_date: targetDate || null,
@@ -982,8 +1010,61 @@ const ProjectFormModal: React.FC<{
           </div>
 
           <div>
-            <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Tech Stack <span className="font-normal text-slate-400">(comma-separated)</span></label>
-            <input type="text" value={techStack} onChange={e => setTechStack(e.target.value)} placeholder="React, TypeScript, Supabase..." className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:border-mac-accent outline-none" />
+            <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Tech Stack</label>
+            {/* Selected tags */}
+            {selectedTech.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {selectedTech.map(t => (
+                  <span key={t} className="inline-flex items-center gap-1 px-2 py-1 bg-mac-accent/10 text-mac-accent text-xs font-medium rounded-lg">
+                    {t}
+                    <button onClick={() => setSelectedTech(selectedTech.filter(x => x !== t))} className="hover:text-red-500 transition-colors">&times;</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {/* Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowTechDropdown(!showTechDropdown)}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm text-left focus:border-mac-accent outline-none flex items-center justify-between"
+              >
+                <span className="text-slate-400">Select technologies...</span>
+                <svg className={`w-4 h-4 text-slate-400 transition-transform ${showTechDropdown ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {showTechDropdown && (
+                <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                  {TECH_STACK_OPTIONS.filter(t => !selectedTech.includes(t)).map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => { setSelectedTech([...selectedTech, t]); }}
+                      className="w-full px-3 py-2 text-sm text-left hover:bg-slate-50 transition-colors"
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Custom add */}
+            <div className="flex gap-2 mt-2">
+              <input
+                type="text"
+                value={customTech}
+                onChange={e => setCustomTech(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && customTech.trim() && !selectedTech.includes(customTech.trim())) { e.preventDefault(); setSelectedTech([...selectedTech, customTech.trim()]); setCustomTech(''); } }}
+                placeholder="Add custom..."
+                className="flex-1 px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:border-mac-accent outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => { if (customTech.trim() && !selectedTech.includes(customTech.trim())) { setSelectedTech([...selectedTech, customTech.trim()]); setCustomTech(''); } }}
+                className="px-3 py-1.5 text-xs font-medium text-mac-accent hover:bg-mac-accent/10 rounded-lg transition-colors"
+              >
+                Add
+              </button>
+            </div>
           </div>
 
           <div>
