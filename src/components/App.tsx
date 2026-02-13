@@ -139,7 +139,7 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
 
   const handleCreateProject = async (data: Partial<Project>) => {
     try {
-      await db.createProject({
+      const newProject = await db.createProject({
         name: data.name || '',
         description: data.description || '',
         status: data.status || 'planning',
@@ -152,6 +152,25 @@ const App: React.FC<AppProps> = ({ currentUser, onLogout }) => {
         notes: data.notes || '',
         created_by: currentUser,
       });
+      // Create default milestones
+      const defaultMilestones: { title: string; phase: MilestonePhase }[] = [
+        { title: 'Requirements & Planning', phase: 'requirements' },
+        { title: 'UI/UX Design', phase: 'design' },
+        { title: 'Core Development', phase: 'development' },
+        { title: 'Testing & QA', phase: 'testing' },
+        { title: 'Deployment & Launch', phase: 'deployment' },
+      ];
+      await Promise.all(defaultMilestones.map((m, i) =>
+        db.createMilestone({
+          project_id: newProject.id,
+          title: m.title,
+          phase: m.phase,
+          status: 'todo',
+          due_date: null,
+          completed_at: null,
+          display_order: i,
+        })
+      ));
       toast.success('Project created');
       setShowProjectForm(false);
       await db.logAction(currentUser, data.name || '', 'CREATED NEW PROJECT', `Status: ${data.status || 'planning'} | Priority: ${data.priority || 'medium'}`);
